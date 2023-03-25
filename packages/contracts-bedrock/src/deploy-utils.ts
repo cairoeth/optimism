@@ -44,7 +44,7 @@ export const deploy = async ({
   // external deployments when doing this check. By doing the check ourselves, we also get to
   // consider external deployments. If we already have the deployment, return early.
   let result: Deployment | DeployResult = await hre.deployments.getOrNull(name)
-  if (result) {
+  if (false) {
     console.log(`skipping ${name}, using existing at ${result.address}`)
   } else {
     result = await hre.deployments.deploy(name, {
