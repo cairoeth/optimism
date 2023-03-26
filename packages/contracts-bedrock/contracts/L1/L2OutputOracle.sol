@@ -14,6 +14,8 @@ interface Module {
     function slash(address) public returns (bool);
 
     function reward(address) public returns (bool);
+
+    function lock(address) public returns (bool);
 }
 
 /**
@@ -261,6 +263,7 @@ contract L2OutputOracle is Initializable, Semver {
             // to verify the information in publicly available sources.
             // See the UMIP corresponding to the defaultIdentifier used in the OptimisticOracleV3 "ASSERT_TRUTH" for more
             // information on how to construct the claim.
+            // TODO: data object that combines the output root, the l2 block number, l1 block hash, and l1 block number
             bytes32 assertionId = OO.assertTruth(
                 abi.encodePacked(
                     "Data asserted: 0x", // _outputRoot is type bytes32 so we add the hex prefix 0x.
@@ -286,6 +289,7 @@ contract L2OutputOracle is Initializable, Semver {
             );
             assertionsData[assertionId] = DataAssertion(_outputRoot, _outputRoot, msg.sender, false, l2Outputs.length);
         }
+
         require(
             _l2BlockNumber == nextBlockNumber(),
             "L2OutputOracle: block number must be equal to next expected block number"
@@ -348,14 +352,20 @@ contract L2OutputOracle is Initializable, Semver {
             _deleteL2Outputs(dataAssertion.l2OutputIndex);
             Module(RESTAKING_MODULE).slash(dataAssertion.asserter);
         }
+
+        // Unlock the stake of the sequencer in the restaking module
+        Module(RESTAKING_MODULE).unlock(dataAssertion.asserter);
     }
     /**
-     * @notice If assertion is disputed, do nothing and wait for resolution.
-     *         This OptimisticOracleV3 callback function needs to be defined so the OOv3 doesn't
-     *         revert when it tries to call it.
+     * @notice If assertion is disputed, lock the stake of the sequencer in the restaking module
      */
     function assertionDisputedCallback(bytes32 assertionId) public {
-        // TODO: lock bond in restaking module
+        require(msg.sender == address(OO));
+
+        DataAssertion memory dataAssertion = assertionsData[assertionId];
+
+        // Lock the stake of the sequencer in the restaking module
+        Module(RESTAKING_MODULE).lock(dataAssertion.asserter);
     }
 
     /**
