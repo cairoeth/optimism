@@ -30,7 +30,10 @@ contract L2OutputOracleTest is L2OutputOracle_Initializer {
             _startingTimestamp: block.timestamp + 1,
             _proposer: proposer,
             _challenger: owner,
-            _finalizationPeriodSeconds: 7 days
+            _finalizationPeriodSeconds: 7 days,
+            _defaultCurrency: address(0),
+            _optimisticOracleV3: address(0),
+            _restakingModule: address(0)
         });
     }
 
@@ -43,7 +46,10 @@ contract L2OutputOracleTest is L2OutputOracle_Initializer {
             _startingTimestamp: block.timestamp,
             _proposer: proposer,
             _challenger: owner,
-            _finalizationPeriodSeconds: 7 days
+            _finalizationPeriodSeconds: 7 days,
+            _defaultCurrency: address(0),
+            _optimisticOracleV3: address(0),
+            _restakingModule: address(0)
         });
     }
 
@@ -66,7 +72,10 @@ contract L2OutputOracleTest is L2OutputOracle_Initializer {
             _startingTimestamp: block.timestamp,
             _proposer: proposer,
             _challenger: owner,
-            _finalizationPeriodSeconds: 7 days
+            _finalizationPeriodSeconds: 7 days,
+            _defaultCurrency: address(0),
+            _optimisticOracleV3: address(0),
+            _restakingModule: address(0)
         });
     }
 

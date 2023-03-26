@@ -4,6 +4,13 @@ pragma solidity 0.8.15;
 import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import { Semver } from "../universal/Semver.sol";
 import { Types } from "../libraries/Types.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { OptimisticOracleV3Interface } from "../periphery/OptimisticOracleV3Interface.sol";
+import "../periphery/AncillaryData.sol";
+
+interface Module {
+    function getSequencer() external returns (address);
+}
 
 /**
  * @custom:proxied
@@ -55,6 +62,31 @@ contract L2OutputOracle is Initializable, Semver {
     Types.OutputProposal[] internal l2Outputs;
 
     /**
+     * @notice UMA: default currency for bonds.
+     */
+    IERC20 public immutable DEFAULT_CURRENCY;
+
+    /**
+     * @notice UMA: Optimistic Oracle (OO).
+     */
+    OptimisticOracleV3Interface public immutable OO;
+
+    /**
+     * @notice UMA: liveness in seconds.
+     */
+    uint64 public constant assertionLiveness = 7200;
+
+    /**
+     * @notice UMA: OO identifier.
+     */
+    bytes32 public immutable DEFAULT_IDENTIFIER;
+
+    /**
+     * @notice Restaking: Module address.
+     */
+    address public immutable RESTAKING_MODULE;
+
+    /**
      * @notice Emitted when an output is proposed.
      *
      * @param outputRoot    The output root.
@@ -86,6 +118,9 @@ contract L2OutputOracle is Initializable, Semver {
      * @param _startingTimestamp   The timestamp of the first L2 block.
      * @param _proposer            The address of the proposer.
      * @param _challenger          The address of the challenger.
+     * @param _defaultCurrency     The address of the default currency for OO's bonds.
+     * @param _optimisticOracleV3  The address of UMA's OO v3.
+     * @param _restakingModule     The address of the restaking module.
      */
     constructor(
         uint256 _submissionInterval,
@@ -94,7 +129,10 @@ contract L2OutputOracle is Initializable, Semver {
         uint256 _startingTimestamp,
         address _proposer,
         address _challenger,
-        uint256 _finalizationPeriodSeconds
+        uint256 _finalizationPeriodSeconds,
+        address _defaultCurrency,
+        address _optimisticOracleV3,
+        address _restakingModule
     ) Semver(1, 2, 0) {
         require(_l2BlockTime > 0, "L2OutputOracle: L2 block time must be greater than 0");
         require(
@@ -108,6 +146,12 @@ contract L2OutputOracle is Initializable, Semver {
         CHALLENGER = _challenger;
         FINALIZATION_PERIOD_SECONDS = _finalizationPeriodSeconds;
 
+        DEFAULT_CURRENCY = IERC20(_defaultCurrency);
+        OO = OptimisticOracleV3Interface(_optimisticOracleV3);
+        DEFAULT_IDENTIFIER = OO.defaultIdentifier();
+
+        RESTAKING_MODULE = _restakingModule;
+
         initialize(_startingBlockNumber, _startingTimestamp);
     }
 
@@ -117,10 +161,10 @@ contract L2OutputOracle is Initializable, Semver {
      * @param _startingBlockNumber Block number for the first recoded L2 block.
      * @param _startingTimestamp   Timestamp for the first recoded L2 block.
      */
-    function initialize(uint256 _startingBlockNumber, uint256 _startingTimestamp)
-        public
-        initializer
-    {
+    function initialize(
+        uint256 _startingBlockNumber,
+        uint256 _startingTimestamp
+    ) public initializer {
         require(
             _startingTimestamp <= block.timestamp,
             "L2OutputOracle: starting L2 timestamp must be less than current time"
@@ -183,7 +227,7 @@ contract L2OutputOracle is Initializable, Semver {
         uint256 _l1BlockNumber
     ) external payable {
         require(
-            msg.sender == PROPOSER,
+            msg.sender == Module(RESTAKING_MODULE).getSequencer(),
             "L2OutputOracle: only the proposer address can propose new outputs"
         );
 
@@ -236,11 +280,9 @@ contract L2OutputOracle is Initializable, Semver {
      *
      * @return The output at the given index.
      */
-    function getL2Output(uint256 _l2OutputIndex)
-        external
-        view
-        returns (Types.OutputProposal memory)
-    {
+    function getL2Output(
+        uint256 _l2OutputIndex
+    ) external view returns (Types.OutputProposal memory) {
         return l2Outputs[_l2OutputIndex];
     }
 
@@ -288,11 +330,9 @@ contract L2OutputOracle is Initializable, Semver {
      *
      * @return First checkpoint that commits to the given L2 block number.
      */
-    function getL2OutputAfter(uint256 _l2BlockNumber)
-        external
-        view
-        returns (Types.OutputProposal memory)
-    {
+    function getL2OutputAfter(
+        uint256 _l2BlockNumber
+    ) external view returns (Types.OutputProposal memory) {
         return l2Outputs[getL2OutputIndexAfter(_l2BlockNumber)];
     }
 
