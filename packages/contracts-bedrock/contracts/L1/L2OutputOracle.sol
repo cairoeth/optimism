@@ -10,6 +10,10 @@ import "../periphery/AncillaryData.sol";
 
 interface Module {
     function getSequencer() external returns (address);
+
+    function slash(address) public returns (bool);
+
+    function reward(address) public returns (bool);
 }
 
 /**
@@ -329,11 +333,17 @@ contract L2OutputOracle is Initializable, Semver {
      */
     function assertionResolvedCallback(bytes32 assertionId, bool assertedTruthfully) public {
         require(msg.sender == address(OO));
-        // If the assertion was true, then do not do anything.
+
+        DataAssertion memory dataAssertion = assertionsData[assertionId];
+
+        // If the assertion was true, reward the proposer
         // If the assertion was false, then delete the L2 outputs from that index forward.
-        if (!assertedTruthfully) {
-            DataAssertion memory dataAssertion = assertionsData[assertionId];
+        if (assertedTruthfully) {
+            Module(RESTAKING_MODULE).reward(dataAssertion.asserter);
+        } else {
+            // first we need to make absolutely sure to remove the corrupt l2 outputs
             deleteL2Outputs(dataAssertion.l2OutputIndex);
+            Module(RESTAKING_MODULE).slash(dataAssertion.asserter);
         }
     }
     /**
