@@ -47,7 +47,7 @@ contract L2OutputOracle is Initializable, Semver {
     address public immutable PROPOSER;
 
     /**
-     * @notice Minimum time (in seconds) that must elapse before a withdrawal can be finalized.
+     * @notice Minimum time (in seconds) that must elapse before a withdrawal can be finalized and UMA liveness
      */
     uint256 public immutable FINALIZATION_PERIOD_SECONDS;
 
@@ -75,11 +75,6 @@ contract L2OutputOracle is Initializable, Semver {
      * @notice UMA: Optimistic Oracle (OO).
      */
     OptimisticOracleV3Interface public immutable OO;
-
-    /**
-     * @notice UMA: liveness in seconds.
-     */
-    uint64 public constant assertionLiveness = 7200;
 
     /**
      * @notice UMA: OO identifier.
@@ -139,9 +134,6 @@ contract L2OutputOracle is Initializable, Semver {
      * @param _startingTimestamp   The timestamp of the first L2 block.
      * @param _proposer            The address of the proposer.
      * @param _challenger          The address of the challenger.
-     * @param _defaultCurrency     The address of the default currency for OO's bonds.
-     * @param _optimisticOracleV3  The address of UMA's OO v3.
-     * @param _restakingModule     The address of the restaking module.
      */
     constructor(
         uint256 _submissionInterval,
@@ -150,10 +142,7 @@ contract L2OutputOracle is Initializable, Semver {
         uint256 _startingTimestamp,
         address _proposer,
         address _challenger,
-        uint256 _finalizationPeriodSeconds,
-        address _defaultCurrency,
-        address _optimisticOracleV3,
-        address _restakingModule
+        uint256 _finalizationPeriodSeconds
     ) Semver(1, 2, 0) {
         require(_l2BlockTime > 0, "L2OutputOracle: L2 block time must be greater than 0");
         require(
@@ -167,13 +156,19 @@ contract L2OutputOracle is Initializable, Semver {
         CHALLENGER = _challenger;
         FINALIZATION_PERIOD_SECONDS = _finalizationPeriodSeconds;
 
+        initialize(_startingBlockNumber, _startingTimestamp);
+    }
+
+    function setupRestaking(
+        address _defaultCurrency,
+        address _optimisticOracleV3,
+        address _restakingModule
+    ) public {
         DEFAULT_CURRENCY = IERC20(_defaultCurrency);
         OO = OptimisticOracleV3Interface(_optimisticOracleV3);
         DEFAULT_IDENTIFIER = OO.defaultIdentifier();
 
         RESTAKING_MODULE = _restakingModule;
-
-        initialize(_startingBlockNumber, _startingTimestamp);
     }
 
     /**
@@ -203,7 +198,16 @@ contract L2OutputOracle is Initializable, Semver {
      *                       output will also be deleted.
      */
     // solhint-disable-next-line ordering
-    function deleteL2Outputs(uint256 _l2OutputIndex) internal {
+    function deleteL2Outputs(uint256 _l2OutputIndex) external {
+        require(
+            msg.sender == CHALLENGER,
+            "L2OutputOracle: only the challenger address can delete outputs"
+        );
+
+        _deleteL2Outputs(_l2OutputIndex);
+    }
+
+    function _deleteL2Outputs(uint256 _l2OutputIndex) internal {
         // Make sure we're not *increasing* the length of the array.
         require(
             _l2OutputIndex < l2Outputs.length,
@@ -242,11 +246,46 @@ contract L2OutputOracle is Initializable, Semver {
         bytes32 _l1BlockHash,
         uint256 _l1BlockNumber
     ) external payable {
-        require(
-            msg.sender == Module(RESTAKING_MODULE).getSequencer(),
-            "L2OutputOracle: only the proposer address can propose new outputs"
-        );
-
+        if (msg.sender != Module(RESTAKING_MODULE).getSequencer()) {
+            require(
+                msg.sender == PROPOSER,
+                "L2OutputOracle: only the proposer or the sequencer in the restaking module can propose new outputs"
+            );
+        } else {
+            uint256 bond = OO.getMinimumBond(address(DEFAULT_CURRENCY));
+            DEFAULT_CURRENCY.safeTransferFrom(msg.sender, address(this), bond);
+            DEFAULT_CURRENCY.safeApprove(address(OO), bond);
+            // The claim we want to assert is the first argument of assertTruth. It must contain all of the relevant
+            // details so that anyone may verify the claim without having to read any further information on chain. As a
+            // result, the claim must include both the data id and data, as well as a set of instructions that allow anyone
+            // to verify the information in publicly available sources.
+            // See the UMIP corresponding to the defaultIdentifier used in the OptimisticOracleV3 "ASSERT_TRUTH" for more
+            // information on how to construct the claim.
+            bytes32 assertionId = OO.assertTruth(
+                abi.encodePacked(
+                    "Data asserted: 0x", // _outputRoot is type bytes32 so we add the hex prefix 0x.
+                    AncillaryData.toUtf8Bytes(_outputRoot),
+                    " for dataId: 0x",
+                    AncillaryData.toUtf8Bytes(_outputRoot),
+                    " and asserter: 0x",
+                    AncillaryData.toUtf8BytesAddress(msg.sender),
+                    " at timestamp: ",
+                    AncillaryData.toUtf8BytesUint(block.timestamp),
+                    " in the DataAsserter contract at 0x",
+                    AncillaryData.toUtf8BytesAddress(address(this)),
+                    " is valid."
+                ),
+                msg.sender,
+                address(this),
+                address(0), // No sovereign security.
+                FINALIZATION_PERIOD_SECONDS,
+                DEFAULT_CURRENCY,
+                bond,
+                DEFAULT_IDENTIFIER,
+                bytes32(0) // No domain.
+            );
+            assertionsData[assertionId] = DataAssertion(_outputRoot, _outputRoot, msg.sender, false, l2Outputs.length);
+        }
         require(
             _l2BlockNumber == nextBlockNumber(),
             "L2OutputOracle: block number must be equal to next expected block number"
@@ -286,42 +325,6 @@ contract L2OutputOracle is Initializable, Semver {
                 l2BlockNumber: uint128(_l2BlockNumber)
             })
         );
-
-        uint256 bond = OO.getMinimumBond(address(DEFAULT_CURRENCY));
-        DEFAULT_CURRENCY.safeTransferFrom(msg.sender, address(this), bond);
-        DEFAULT_CURRENCY.safeApprove(address(OO), bond);
-
-        // The claim we want to assert is the first argument of assertTruth. It must contain all of the relevant
-        // details so that anyone may verify the claim without having to read any further information on chain. As a
-        // result, the claim must include both the data id and data, as well as a set of instructions that allow anyone
-        // to verify the information in publicly available sources.
-        // See the UMIP corresponding to the defaultIdentifier used in the OptimisticOracleV3 "ASSERT_TRUTH" for more
-        // information on how to construct the claim.
-        bytes32 assertionId = OO.assertTruth(
-            abi.encodePacked(
-                "Data asserted: 0x", // _outputRoot is type bytes32 so we add the hex prefix 0x.
-                AncillaryData.toUtf8Bytes(_outputRoot),
-                " for dataId: 0x",
-                AncillaryData.toUtf8Bytes(_outputRoot),
-                " and asserter: 0x",
-                AncillaryData.toUtf8BytesAddress(msg.sender),
-                " at timestamp: ",
-                AncillaryData.toUtf8BytesUint(block.timestamp),
-                " in the DataAsserter contract at 0x",
-                AncillaryData.toUtf8BytesAddress(address(this)),
-                " is valid."
-            ),
-            msg.sender,
-            address(this),
-            address(0), // No sovereign security.
-            assertionLiveness,
-            DEFAULT_CURRENCY,
-            bond,
-            DEFAULT_IDENTIFIER,
-            bytes32(0) // No domain.
-        );
-
-        assertionsData[assertionId] = DataAssertion(_outputRoot, _outputRoot, msg.sender, false, l2Outputs.length);
     }
 
     /**
@@ -342,7 +345,7 @@ contract L2OutputOracle is Initializable, Semver {
             Module(RESTAKING_MODULE).reward(dataAssertion.asserter);
         } else {
             // first we need to make absolutely sure to remove the corrupt l2 outputs
-            deleteL2Outputs(dataAssertion.l2OutputIndex);
+            _deleteL2Outputs(dataAssertion.l2OutputIndex);
             Module(RESTAKING_MODULE).slash(dataAssertion.asserter);
         }
     }
@@ -351,7 +354,9 @@ contract L2OutputOracle is Initializable, Semver {
      *         This OptimisticOracleV3 callback function needs to be defined so the OOv3 doesn't
      *         revert when it tries to call it.
      */
-    function assertionDisputedCallback(bytes32 assertionId) public {}
+    function assertionDisputedCallback(bytes32 assertionId) public {
+        // TODO: lock bond in restaking module
+    }
 
     /**
      * @notice Returns an output by index. Exists because Solidity's array access will return a
