@@ -17,12 +17,6 @@ const envVarPrefix = "OP_BATCHER"
 var (
 	/* Required flags */
 
-	L1ModuleFlag = cli.StringFlag{
-		Name:     "module",
-		Usage:    "L1 Module contract with sequencer selector",
-		Required: true,
-		EnvVar:   opservice.PrefixEnvVar(envVarPrefix, "L1_MODULE"),
-	}
 	L1EthRpcFlag = cli.StringFlag{
 		Name:     "l1-eth-rpc",
 		Usage:    "HTTP provider URL for L1",
@@ -136,7 +130,6 @@ var (
 )
 
 var requiredFlags = []cli.Flag{
-	L1ModuleFlag,
 	L1EthRpcFlag,
 	L2EthRpcFlag,
 	RollupRpcFlag,

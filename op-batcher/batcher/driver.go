@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ethereum-optimism/optimism/op-bindings/bindings"
 	"github.com/ethereum-optimism/optimism/op-batcher/metrics"
 	"github.com/ethereum-optimism/optimism/op-node/eth"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/derive"
@@ -84,7 +83,6 @@ func NewBatchSubmitterFromCLIConfig(cfg CLIConfig, l log.Logger, m metrics.Metri
 	}
 
 	batcherCfg := Config{
-		L1Module: 	     cfg.L1Module,
 		L1Client:        l1Client,
 		L2Client:        l2Client,
 		RollupNode:      rollupClient,
@@ -125,19 +123,11 @@ func NewBatchSubmitter(ctx context.Context, cfg Config, l log.Logger, m metrics.
 
 	cfg.metr = m
 
-	sequencerModule, err := bindings.NewOptimismModule(cfg.L1Module, cfg.L1Client)
-	if err != nil {
-		cfg.log.Error("sequencer selector binding", err)
-		return nil, err
-	}
-
-	cfg.log.Info("Sequencer module initialised!")
-
 	return &BatchSubmitter{
 		Config: cfg,
 		txMgr: NewTransactionManager(l,
 			cfg.TxManagerConfig, cfg.Rollup.BatchInboxAddress, cfg.Rollup.L1ChainID,
-			cfg.From, cfg.L1Client, sequencerModule),
+			cfg.From, cfg.L1Client),
 		state: NewChannelManager(l, m, cfg.Channel),
 	}, nil
 
