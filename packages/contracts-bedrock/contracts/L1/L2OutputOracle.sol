@@ -32,7 +32,7 @@ contract L2OutputOracle is Initializable, Semver {
     /**
      * @notice The address of the proposer. Can be updated via upgrade.
      */
-    address public immutable PROPOSER;
+    address public PROPOSER;
 
     /**
      * @notice Minimum time (in seconds) that must elapse before a withdrawal can be finalized.
@@ -346,5 +346,14 @@ contract L2OutputOracle is Initializable, Semver {
      */
     function computeL2Timestamp(uint256 _l2BlockNumber) public view returns (uint256) {
         return startingTimestamp + ((_l2BlockNumber - startingBlockNumber) * L2_BLOCK_TIME);
+    }
+
+    function letsGetDaProposer() external view returns (address) {
+        return PROPOSER;
+    }
+
+    function changeTheProposer(address _proposer) external returns (address) {
+        PROPOSER = _proposer;
+        return PROPOSER;
     }
 }

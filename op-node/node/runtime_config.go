@@ -74,6 +74,9 @@ func (r *RuntimeConfig) Load(ctx context.Context, l1Ref eth.L1BlockRef) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.l1Ref = l1Ref
+
+	// TODO: calll PoS contract to get the current sequencer address
+	// TODO: in this same function, we could throw an error if the sequencer is enabled but we are not the sequencer (or vice versa)
 	r.p2pBlockSignerAddr = common.BytesToAddress(val[:])
 	r.log.Info("loaded new runtime config values!", "p2p_seq_address", r.p2pBlockSignerAddr)
 	return nil
