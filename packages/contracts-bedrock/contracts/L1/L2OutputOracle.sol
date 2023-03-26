@@ -269,7 +269,7 @@ contract L2OutputOracle is Initializable, Semver {
                     "Data asserted: 0x", // _outputRoot is type bytes32 so we add the hex prefix 0x.
                     AncillaryData.toUtf8Bytes(_outputRoot),
                     " for dataId: 0x",
-                    AncillaryData.toUtf8Bytes(_outputRoot),
+                    AncillaryData.toUtf8BytesAddress(address(this)),
                     " and asserter: 0x",
                     AncillaryData.toUtf8BytesAddress(msg.sender),
                     " at timestamp: ",
@@ -346,11 +346,15 @@ contract L2OutputOracle is Initializable, Semver {
         // If the assertion was true, reward the proposer
         // If the assertion was false, then delete the L2 outputs from that index forward.
         if (assertedTruthfully) {
+            assertionsData[assertionId].resolved = true;
             Module(RESTAKING_MODULE).reward(dataAssertion.asserter);
         } else {
             // first we need to make absolutely sure to remove the corrupt l2 outputs
             _deleteL2Outputs(dataAssertion.l2OutputIndex);
             Module(RESTAKING_MODULE).slash(dataAssertion.asserter);
+
+            // Delete the data assertion if it was false to save gas.
+            delete assertionsData[assertionId];
         }
 
         // Unlock the stake of the sequencer in the restaking module
