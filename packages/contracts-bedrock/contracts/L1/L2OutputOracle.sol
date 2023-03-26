@@ -4,7 +4,7 @@ pragma solidity 0.8.15;
 import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import { Semver } from "../universal/Semver.sol";
 import { Types } from "../libraries/Types.sol";
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { OptimisticOracleV3Interface } from "../periphery/OptimisticOracleV3Interface.sol";
 import "../periphery/AncillaryData.sol";
 
@@ -20,6 +20,7 @@ interface Module {
  *         these outputs to verify information about the state of L2.
  */
 contract L2OutputOracle is Initializable, Semver {
+    using SafeERC20 for IERC20;
     /**
      * @notice The interval in L2 blocks at which checkpoints must be submitted. Although this is
      *         immutable, it can safely be modified by upgrading the implementation contract.
@@ -80,6 +81,22 @@ contract L2OutputOracle is Initializable, Semver {
      * @notice UMA: OO identifier.
      */
     bytes32 public immutable DEFAULT_IDENTIFIER;
+
+    /**
+     * @notice UMA: Data assertion structure.
+     */
+    struct DataAssertion {
+        bytes32 dataId; // The dataId that was asserted.
+        bytes32 data; // This could be an arbitrary data type.
+        address asserter; // The address that made the assertion.
+        bool resolved; // Whether the assertion has been resolved.
+        uint256 l2OutputIndex; // Index of the output in the l2Outputs array.
+    }
+
+    /**
+     * @notice UMA: Assertion data.
+     */
+    mapping(bytes32 => DataAssertion) public assertionsData;
 
     /**
      * @notice Restaking: Module address.
@@ -182,12 +199,7 @@ contract L2OutputOracle is Initializable, Semver {
      *                       output will also be deleted.
      */
     // solhint-disable-next-line ordering
-    function deleteL2Outputs(uint256 _l2OutputIndex) external {
-        require(
-            msg.sender == CHALLENGER,
-            "L2OutputOracle: only the challenger address can delete outputs"
-        );
-
+    function deleteL2Outputs(uint256 _l2OutputIndex) internal {
         // Make sure we're not *increasing* the length of the array.
         require(
             _l2OutputIndex < l2Outputs.length,
@@ -270,7 +282,66 @@ contract L2OutputOracle is Initializable, Semver {
                 l2BlockNumber: uint128(_l2BlockNumber)
             })
         );
+
+        uint256 bond = OO.getMinimumBond(address(DEFAULT_CURRENCY));
+        DEFAULT_CURRENCY.safeTransferFrom(msg.sender, address(this), bond);
+        DEFAULT_CURRENCY.safeApprove(address(OO), bond);
+
+        // The claim we want to assert is the first argument of assertTruth. It must contain all of the relevant
+        // details so that anyone may verify the claim without having to read any further information on chain. As a
+        // result, the claim must include both the data id and data, as well as a set of instructions that allow anyone
+        // to verify the information in publicly available sources.
+        // See the UMIP corresponding to the defaultIdentifier used in the OptimisticOracleV3 "ASSERT_TRUTH" for more
+        // information on how to construct the claim.
+        bytes32 assertionId = OO.assertTruth(
+            abi.encodePacked(
+                "Data asserted: 0x", // _outputRoot is type bytes32 so we add the hex prefix 0x.
+                AncillaryData.toUtf8Bytes(_outputRoot),
+                " for dataId: 0x",
+                AncillaryData.toUtf8Bytes(_outputRoot),
+                " and asserter: 0x",
+                AncillaryData.toUtf8BytesAddress(msg.sender),
+                " at timestamp: ",
+                AncillaryData.toUtf8BytesUint(block.timestamp),
+                " in the DataAsserter contract at 0x",
+                AncillaryData.toUtf8BytesAddress(address(this)),
+                " is valid."
+            ),
+            msg.sender,
+            address(this),
+            address(0), // No sovereign security.
+            assertionLiveness,
+            DEFAULT_CURRENCY,
+            bond,
+            DEFAULT_IDENTIFIER,
+            bytes32(0) // No domain.
+        );
+
+        assertionsData[assertionId] = DataAssertion(_outputRoot, _outputRoot, msg.sender, false, l2Outputs.length);
     }
+
+    /**
+     * @notice Callback to receive the resolution result of an assertion.
+     *
+     * @param assertionId Assertion ID.
+     *
+     * @param assertedTruthfully Resolution result.
+     */
+    function assertionResolvedCallback(bytes32 assertionId, bool assertedTruthfully) public {
+        require(msg.sender == address(OO));
+        // If the assertion was true, then do not do anything.
+        // If the assertion was false, then delete the L2 outputs from that index forward.
+        if (!assertedTruthfully) {
+            DataAssertion memory dataAssertion = assertionsData[assertionId];
+            deleteL2Outputs(dataAssertion.l2OutputIndex);
+        }
+    }
+    /**
+     * @notice If assertion is disputed, do nothing and wait for resolution.
+     *         This OptimisticOracleV3 callback function needs to be defined so the OOv3 doesn't
+     *         revert when it tries to call it.
+     */
+    function assertionDisputedCallback(bytes32 assertionId) public {}
 
     /**
      * @notice Returns an output by index. Exists because Solidity's array access will return a
